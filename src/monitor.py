@@ -24,6 +24,13 @@ from src.logging_service import get_logger
 
 LOGGER = get_logger()
 
+
+class MonitorRestartRequested(Exception):
+    def __init__(self, restart_count, wait_seconds):
+        self.restart_count = restart_count
+        self.wait_seconds = wait_seconds
+        super().__init__(f"Restart requested: {restart_count}")
+
 # Jogadores com aproveitamento abaixo de 55.1% na base de 17k
 BLACKLIST_V12 = [
 ]
@@ -544,7 +551,7 @@ def audit_recent_result(page_gg, task_data):
 # =================================================================
 # ... (imports e funções anteriores) ...
 
-def start_monitor(restart_count=0):
+def run_monitor_cycle(restart_count=0):
     collection_mode = CEREBRO_V12 is None
     if collection_mode:
         print("🧪 MODO COLETA BET365: modelo V12 ausente; sinais, Telegram e planilha estão desativados.")
@@ -650,8 +657,7 @@ def start_monitor(restart_count=0):
                         max_restarts,
                         restart_wait_seconds,
                     )
-                    time.sleep(restart_wait_seconds)
-                    return start_monitor(proxima_tentativa)
+                    raise MonitorRestartRequested(proxima_tentativa, restart_wait_seconds)
 
                 if collection_mode:
                     previous_bet365_state = track_bet365_updates(
@@ -991,10 +997,22 @@ def start_monitor(restart_count=0):
                 time.sleep(1) # Aumenta e randomiza o sleep principal
                 gc.collect()
 
+            except MonitorRestartRequested:
+                raise
             except Exception as e:
                 LOGGER.exception("Erro crítico no loop principal.")
                 print(f"❌ Erro Crítico no Loop Principal: {e}")
                 time.sleep(10)
+
+
+def start_monitor(restart_count=0):
+    while True:
+        try:
+            return run_monitor_cycle(restart_count)
+        except MonitorRestartRequested as restart:
+            restart_count = restart.restart_count
+            time.sleep(restart.wait_seconds)
+
 
 if __name__ == "__main__":
     start_monitor()
