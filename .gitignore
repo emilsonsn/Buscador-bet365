@@ -3,3 +3,4 @@ __pycache__
 .vscode
 tipmanager.net.har
 .env
+logs/

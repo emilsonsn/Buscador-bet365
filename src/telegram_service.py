@@ -1,5 +1,8 @@
 import os
 import requests
+from src.logging_service import get_logger
+
+LOGGER = get_logger()
 
 
 class TelegramService:
@@ -23,7 +26,7 @@ def send_telegram(message, token=None, chat_id=None):
         if response.status_code == 200:
             return response.json().get("result", {}).get("message_id")
     except Exception:
-        pass
+        LOGGER.exception("Falha ao enviar mensagem ao Telegram.")
     return None
 
 
@@ -36,4 +39,4 @@ def edit_telegram(message_id, new_text, token=None, chat_id=None):
             data={"chat_id": chat_id, "message_id": message_id, "text": new_text, "parse_mode": "Markdown"},
         )
     except Exception:
-        pass
+        LOGGER.exception("Falha ao editar mensagem no Telegram: %s", message_id)

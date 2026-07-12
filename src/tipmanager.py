@@ -1,4 +1,7 @@
 import re
+from src.logging_service import get_logger
+
+LOGGER = get_logger()
 
 
 class TipManagerClient:
@@ -32,6 +35,7 @@ def find_tipmanager_match(browser_context, home_name, away_name, attempts=2):
                 page_tip.wait_for_selector("div.cursor-pointer, span:has-text('vs')", timeout=4000)
                 page_tip.wait_for_timeout(1000)
             except Exception:
+                LOGGER.warning("Resultados do TipManager não apareceram no tempo esperado.")
                 page_tip.wait_for_timeout(1500)
             card = None
             for scroll_count in range(2):
@@ -42,6 +46,7 @@ def find_tipmanager_match(browser_context, home_name, away_name, attempts=2):
                             card = item
                             break
                     except Exception:
+                        LOGGER.debug("Não foi possível ler um card do TipManager.", exc_info=True)
                         continue
                 if card:
                     break
@@ -54,14 +59,17 @@ def find_tipmanager_match(browser_context, home_name, away_name, attempts=2):
             try:
                 card.click(timeout=1000)
             except Exception:
+                LOGGER.debug("Clique normal no TipManager falhou; usando fallback.", exc_info=True)
                 card.evaluate("el => el.click()")
             try:
                 page_tip.wait_for_selector("p.font-exo.italic.font-black", timeout=15000)
                 page_tip.wait_for_timeout(3000)
                 return page_tip
             except Exception:
+                LOGGER.warning("Página de análise do TipManager não carregou para %s vs %s.", p1, p2)
                 page_tip.close()
         except Exception:
+            LOGGER.exception("Falha ao consultar TipManager para %s vs %s.", p1, p2)
             page_tip.close()
     return None
 
@@ -91,14 +99,14 @@ def extract_and_analyze(page_tip):
                         media_q4_scanner = mc + mf
                         break
         except Exception:
-            pass
+            LOGGER.debug("Não foi possível obter média do quarto período.", exc_info=True)
         try:
             l10 = page_tip.locator("div").filter(has_text=re.compile(r"^10 últimas$")).last
             media_l10_total = float((l10.locator("xpath=..").locator("div").last.locator("span").first.inner_text() or "0").strip())
             geral = page_tip.locator("div").filter(has_text=re.compile(r"^Todas as Partidas$")).last
             media_hist_total = float((geral.locator("xpath=..").locator("div").last.locator("span").first.inner_text() or "0").strip())
         except Exception:
-            pass
+            LOGGER.debug("Não foi possível obter médias históricas.", exc_info=True)
         media_estimada = ((media_l10_total * .77) + (media_hist_total * .23)) / 4
         media_final = ((media_estimada * .89) + (media_q4_scanner * .11)) if media_q4_scanner > 0 else media_estimada
         quadro = page_tip.locator("div.rounded-xl").filter(has=page_tip.locator("h3", has_text="Over/Under (Partida)")).first
@@ -109,7 +117,8 @@ def extract_and_analyze(page_tip):
                     try:
                         linhas_over_vip[float(dados[0].replace(',', '.'))] = float(dados[1].replace('%', '').strip().replace(',', '.'))
                     except Exception:
-                        pass
+                        LOGGER.debug("Linha VIP inválida no TipManager.", exc_info=True)
         return {"status":"SUCESSO", "h2h":h2h_count, "media_q4_scanner":media_q4_scanner, "media_l10_total":media_l10_total, "media_hist_total":media_hist_total, "media_estimada":media_estimada, "media_final":media_final, "over_vip":linhas_over_vip, "under_vip":linhas_under_vip}
     except Exception:
+        LOGGER.exception("Falha ao analisar dados do TipManager.")
         return {"status": "ERRO"}

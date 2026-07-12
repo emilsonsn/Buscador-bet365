@@ -1,6 +1,9 @@
 import joblib
 import pandas as pd
 from pathlib import Path
+from src.logging_service import get_logger
+
+LOGGER = get_logger()
 
 
 class V12Model:
@@ -28,6 +31,7 @@ def load_v12(base_directory):
         print("✅ [V12 SNIPER] Cérebro carregado com sucesso!")
         return model_bundle
     except Exception as erro:
+        LOGGER.exception("Falha ao carregar o modelo V12: %s", caminho)
         print(f"⚠️ Modelo V12 indisponível: {erro}")
         return None
 

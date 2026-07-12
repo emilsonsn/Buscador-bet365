@@ -20,6 +20,9 @@ from src.model_v12 import V12Model
 from src.spreadsheet import SpreadsheetService
 from src.telegram_service import TelegramService
 from src.tipmanager import TipManagerClient
+from src.logging_service import get_logger
+
+LOGGER = get_logger()
 
 # Jogadores com aproveitamento abaixo de 55.1% na base de 17k
 BLACKLIST_V12 = [
@@ -122,7 +125,7 @@ def extract_all_bet365_games(page_bet):
             except Exception:
                 continue
     except Exception:
-        pass
+        LOGGER.exception("Falha ao extrair jogos da Bet365.")
     return games
 
 
@@ -292,7 +295,7 @@ def clear_context_pages(context):
         try:
             pagina.close()
         except Exception:
-            pass
+            LOGGER.debug("Não foi possível fechar uma aba antiga.", exc_info=True)
 
     return pagina_principal
 
@@ -393,7 +396,7 @@ def extract_and_analyze(page_tip):
                     media_q4_scanner = mc + mf
                     break
         except Exception:
-            pass
+            LOGGER.debug("Não foi possível calcular a média do quarto período.", exc_info=True)
 
         try:
             lbl_l10 = page_tip.locator("div").filter(has_text=re.compile(r"^10 últimas$")).last
@@ -405,7 +408,7 @@ def extract_and_analyze(page_tip):
                 (lbl_geral.locator("xpath=..").locator("div").last.locator("span").first.inner_text() or "0").strip()
             )
         except Exception:
-            pass
+            LOGGER.debug("Não foi possível calcular as médias históricas.", exc_info=True)
 
         soma_ponderada   = (media_l10_total * 0.77) + (media_hist_total * 0.23)
         media_estimada   = soma_ponderada / 4
@@ -427,7 +430,7 @@ def extract_and_analyze(page_tip):
                         linha_val = float(features[0].replace(',', '.'))
                         linhas_over_vip[linha_val] = pct
                     except Exception:
-                        pass
+                        LOGGER.debug("Linha VIP inválida no TipManager.", exc_info=True)
 
         return {
             "status": "SUCESSO",
@@ -527,11 +530,13 @@ def audit_recent_result(page_gg, task_data):
             plan = PLANILHA.connect()
             aba = plan.worksheet({1:"JAN", 2:"FEV", 3:"MAR", 4:"ABR", 5:"MAI", 6:"JUN", 7:"JUL", 8:"AGO", 9:"SET", 10:"OUT", 11:"NOV", 12:"DEZ"}[datetime.now().month])
             aba.update_acell(f"X{task_data['linha_planilha']}", resultado)
-        except: pass
+        except Exception:
+            LOGGER.exception("Falha ao atualizar o resultado da auditoria na planilha.")
 
         return resultado, placar_str
 
     except Exception as e:
+        LOGGER.exception("Falha na auditoria do resultado.")
         print(f"❌ Erro Auditoria: {e}")
         return None, None
 
@@ -715,12 +720,13 @@ def start_monitor(restart_count=0):
                             try:
                                 dados_tip = TIPMANAGER.analyze(page_tip)
                             except Exception as e:
+                                LOGGER.exception("Falha ao analisar TipManager para %s.", id_j)
                                 print(f"⚠️ Erro ao ler TipManager: {e}")
                             finally:
                                 try:
                                     page_tip.close()
                                 except Exception:
-                                    pass
+                                    LOGGER.debug("Não foi possível fechar a aba do TipManager.", exc_info=True)
 
                             if dados_tip and dados_tip["status"] == "SUCESSO":
                                 dados_tip['linha_inicial_bet']  = game['linha_over'] if game['linha_over'] else 0
@@ -919,12 +925,14 @@ def start_monitor(restart_count=0):
                                             print(" ✅ Agendado para auditoria!")
 
                                         except Exception as e:
+                                            LOGGER.exception("Falha ao registrar sinal na planilha.")
                                             print(f" ❌ Erro Planilha: {e}")
                                 else:
                                     print(f" ⚠️ Modelo vetou: {id_j} | Confiança: {win_probability:.2%}")
                                     discarded_games.add(id_j)
 
                         except Exception as e:
+                            LOGGER.exception("Falha na predição do modelo.")
                             print(f" ❌ Erro crítico na predição: {e}")
 
                 # -----------------------------------------------------------------
@@ -956,6 +964,7 @@ def start_monitor(restart_count=0):
                                         aba_aud.update_acell(f"X{tarefa['linha_planilha']}", res)
 
                                     except Exception as e:
+                                        LOGGER.exception("Falha ao consolidar auditoria na planilha.")
                                         tarefa["horario_conferencia"] = time.time() + 60
                             else:
                                 # Se o placar não saiu, espera mais 60s para não travar o loop
@@ -970,12 +979,13 @@ def start_monitor(restart_count=0):
                         if "bet365" not in url_aba and "h2hggl" not in url_aba:
                             extra_page.close()
                     except Exception:
-                        pass
+                        LOGGER.debug("Não foi possível fechar uma aba auxiliar.", exc_info=True)
 
                 time.sleep(1) # Aumenta e randomiza o sleep principal
                 gc.collect()
 
             except Exception as e:
+                LOGGER.exception("Erro crítico no loop principal.")
                 print(f"❌ Erro Crítico no Loop Principal: {e}")
                 time.sleep(10)
 

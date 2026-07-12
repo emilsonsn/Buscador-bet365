@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from src.logging_service import configure_logging
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -23,6 +24,7 @@ class AppConfig:
     feed_timeout: int
     max_restarts: int
     model_file: Path
+    logs_directory: str
 
     @classmethod
     def from_environment(cls):
@@ -34,6 +36,7 @@ class AppConfig:
             feed_timeout=int(os.getenv("BET365_STALL_TIMEOUT_SECONDS", "60")),
             max_restarts=int(os.getenv("BET365_MAX_RESTARTS", "3")),
             model_file=PROJECT_ROOT / "v12_sniper_final.pkl",
+            logs_directory=os.getenv("LOGS_DIRECTORY", "logs"),
         )
         config.validate()
         return config
@@ -61,9 +64,17 @@ class Application:
         print("=" * 50)
 
     def run(self):
+        logger, log_file = configure_logging(PROJECT_ROOT, self.config.logs_directory)
+        logger.info("Aplicação iniciada.")
         self.show_summary()
-        from src.monitor import start_monitor as start_monitor
-        start_monitor()
+        try:
+            from src.monitor import start_monitor
+            start_monitor()
+        except Exception:
+            logger.exception("Erro não tratado na execução do robô.")
+            raise
+        finally:
+            logger.info("Aplicação finalizada. Log salvo em: %s", log_file)
 
 
 def main():

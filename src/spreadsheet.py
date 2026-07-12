@@ -3,6 +3,9 @@ from datetime import datetime
 from pathlib import Path
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from src.logging_service import get_logger
+
+LOGGER = get_logger()
 
 MESES = {1:"JAN", 2:"FEV", 3:"MAR", 4:"ABR", 5:"MAI", 6:"JUN", 7:"JUL", 8:"AGO", 9:"SET", 10:"OUT", 11:"NOV", 12:"DEZ"}
 
@@ -25,8 +28,12 @@ def connect_spreadsheet(credentials_path=None, spreadsheet_id=None):
     if not spreadsheet_id:
         raise RuntimeError("GOOGLE_SPREADSHEET_ID não foi definido no .env.")
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
-    return gspread.authorize(creds).open_by_key(spreadsheet_id)
+    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
+        return gspread.authorize(creds).open_by_key(spreadsheet_id)
+    except Exception:
+        LOGGER.exception("Falha ao conectar à planilha Google.")
+        raise
 
 
 def current_month_sheet(spreadsheet):
