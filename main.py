@@ -23,6 +23,7 @@ class AppConfig:
     reset_tabs: bool
     feed_timeout: int
     max_restarts: int
+    restart_wait_after_close: int
     model_file: Path
     logs_directory: str
 
@@ -35,6 +36,7 @@ class AppConfig:
             reset_tabs=get_bool("BET365_RESET_TABS", True),
             feed_timeout=int(os.getenv("BET365_STALL_TIMEOUT_SECONDS", "60")),
             max_restarts=int(os.getenv("BET365_MAX_RESTARTS", "3")),
+            restart_wait_after_close=int(os.getenv("BET365_RESTART_WAIT_AFTER_CLOSE_SECONDS", "120")),
             model_file=PROJECT_ROOT / "v12_sniper_final.pkl",
             logs_directory=os.getenv("LOGS_DIRECTORY", "logs"),
         )
@@ -48,6 +50,8 @@ class AppConfig:
             raise ValueError("BET365_STALL_TIMEOUT_SECONDS deve ser maior que zero.")
         if self.max_restarts < 0:
             raise ValueError("BET365_MAX_RESTARTS não pode ser negativo.")
+        if self.restart_wait_after_close < 0:
+            raise ValueError("BET365_RESTART_WAIT_AFTER_CLOSE_SECONDS não pode ser negativo.")
 
 
 class Application:
@@ -60,7 +64,10 @@ class Application:
         print("=" * 50)
         print(f"🚀 Robô | modo: {mode}")
         print(f"🌐 Chrome: {interface} | CDP: {self.config.cdp_port}")
-        print(f"🛡️ Watchdog: {self.config.feed_timeout}s | reinícios: {self.config.max_restarts}")
+        print(
+            f"🛡️ Watchdog: {self.config.feed_timeout}s | reinícios: {self.config.max_restarts} | "
+            f"pausa restart: {self.config.restart_wait_after_close}s"
+        )
         print("=" * 50)
 
     def run(self):

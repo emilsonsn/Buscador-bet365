@@ -572,7 +572,6 @@ def start_monitor(restart_count=0):
 
         if is_bet365_blocked(page_bet):
             print("❌ A Bet365 retornou uma página de bloqueio (Cloudflare). Nenhuma coleta será feita.")
-            print("   Resolva o bloqueio diretamente no navegador e execute o script novamente.")
             return
 
         page_gg = next((pg for pg in context.pages if "h2hggl.com" in pg.url), None)
@@ -595,7 +594,7 @@ def start_monitor(restart_count=0):
         last_bet365_update = time.time()
         max_stall_seconds = int(os.getenv("BET365_STALL_TIMEOUT_SECONDS", "60"))
         max_restarts = int(os.getenv("BET365_MAX_RESTARTS", "3"))
-        restart_delay = int(os.getenv("BET365_RESTART_DELAY_SECONDS", "5"))
+        restart_wait_seconds = int(os.getenv("BET365_RESTART_WAIT_AFTER_CLOSE_SECONDS", "120"))
 
         # NOVO: Dicionário para controlar as attempts no TipManager
         # { "ID_JOGO": { "attempts": N, "timestamp_ultima_tentativa": T } }
@@ -643,7 +642,15 @@ def start_monitor(restart_count=0):
                     proxima_tentativa = restart_count + 1
                     print(f"⚠️ Bet365 sem atualização por {max_stall_seconds}s. Reiniciando robô ({proxima_tentativa}/{max_restarts})...")
                     close_all_chrome_instances()
-                    time.sleep(restart_delay)
+                    print(f"⏳ Aguardando {restart_wait_seconds}s antes de abrir o Chrome novamente...")
+                    LOGGER.warning(
+                        "Bet365 sem atualização por %ss. Restart %s/%s aguardando %ss após fechar Chrome.",
+                        max_stall_seconds,
+                        proxima_tentativa,
+                        max_restarts,
+                        restart_wait_seconds,
+                    )
+                    time.sleep(restart_wait_seconds)
                     return start_monitor(proxima_tentativa)
 
                 if collection_mode:
