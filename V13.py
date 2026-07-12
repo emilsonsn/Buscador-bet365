@@ -1,6 +1,10 @@
 import os
 import re
 import time
+import socket
+import shutil
+import subprocess
+import sys
 import requests
 from playwright.sync_api import sync_playwright
 import gspread
@@ -27,7 +31,7 @@ def carregar_v12():
         print(f"✅ [V12 SNIPER] Cérebro carregado com sucesso!")
         return cerebro
     except Exception as e:
-        print(f"❌ ERRO: {e}")
+        print(f"⚠️ Modelo V12 indisponível: {e}")
         return None
 
 CEREBRO_V12 = carregar_v12()
@@ -144,6 +148,164 @@ def extrair_todos_jogos_bet365(page_bet):
     except Exception:
         pass
     return jogos
+
+
+def registrar_atualizacoes_bet365(jogos, estado_anterior):
+    """Exibe somente mudanças observadas na página já aberta pelo usuário."""
+    estado_atual = {
+        jogo["id"]: (
+            jogo["periodo"], jogo["tempo"], jogo["score_casa"], jogo["score_fora"],
+            jogo["linha_over"], jogo["odd_over"], jogo["linha_under"], jogo["odd_under"],
+        )
+        for jogo in jogos
+    }
+
+    if not estado_anterior:
+        print(f"📡 Bet365: {len(jogos)} jogo(s) encontrado(s). Aguardando alterações...")
+    else:
+        alterados = [
+            jogo_id for jogo_id, dados in estado_atual.items()
+            if estado_anterior.get(jogo_id) != dados
+        ]
+        removidos = set(estado_anterior) - set(estado_atual)
+        if alterados or removidos:
+            print(f"🔄 Bet365 atualizou: {len(alterados)} alterado(s), {len(removidos)} removido(s).")
+
+    return estado_atual
+
+
+def localizar_aba_bet365(context):
+    """Localiza a aba pela URL, inclusive quando o título foi alterado por uma página de erro."""
+    return next(
+        (
+            page for page in context.pages
+            if "bet365" in page.url.lower() or "bet365" in page.title().lower()
+        ),
+        None,
+    )
+
+
+def pagina_bet365_bloqueada(page_bet):
+    """Detecta páginas de bloqueio para evitar novas tentativas automáticas."""
+    try:
+        titulo = page_bet.title().lower()
+        texto = page_bet.locator("body").inner_text(timeout=3_000).lower()
+        return "cloudflare" in titulo or "you have been blocked" in texto
+    except Exception:
+        return False
+
+
+CDP_HOST = "127.0.0.1"
+CDP_PORT = int(os.getenv("BET365_CDP_PORT", "9222"))
+CDP_URL = f"http://{CDP_HOST}:{CDP_PORT}"
+
+
+def encontrar_executavel_chrome():
+    """Retorna o executável do Chrome no Linux ou Windows."""
+    if sys.platform.startswith("win"):
+        candidatos = [
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+    else:
+        candidatos = [
+            shutil.which("google-chrome"),
+            shutil.which("google-chrome-stable"),
+            shutil.which("chromium"),
+            shutil.which("chromium-browser"),
+            "/usr/bin/google-chrome",
+        ]
+
+    return next((caminho for caminho in candidatos if caminho and os.path.exists(caminho)), None)
+
+
+def porta_cdp_disponivel():
+    try:
+        with socket.create_connection((CDP_HOST, CDP_PORT), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def encerrar_todas_instancias_chrome():
+    """Encerra navegadores Chrome/Chromium antes de iniciar o ambiente dedicado do bot."""
+    print("🛑 Encerrando todas as instâncias do Chrome/Chromium...")
+    if sys.platform.startswith("win"):
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "chrome.exe"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        for processo in ("chrome", "google-chrome", "chromium", "chromium-browser"):
+            subprocess.run(
+                ["pkill", "-x", processo],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+
+    for _ in range(10):
+        if not porta_cdp_disponivel():
+            print("✅ Instâncias anteriores encerradas.")
+            return
+        time.sleep(1)
+
+    raise RuntimeError(f"A porta {CDP_PORT} permaneceu ocupada após encerrar o Chrome.")
+
+
+def conectar_ou_iniciar_chrome(playwright):
+    """Conecta ao Chrome existente ou inicia uma instância local para o bot."""
+    if porta_cdp_disponivel():
+        print(f"🌐 Chrome existente encontrado na porta {CDP_PORT}.")
+        return playwright.chromium.connect_over_cdp(CDP_URL)
+
+    executavel = encontrar_executavel_chrome()
+    if not executavel:
+        raise RuntimeError("Google Chrome não foi encontrado. Instale-o ou informe o executável no sistema.")
+
+    perfil_configurado = os.getenv("BET365_CHROME_PROFILE")
+    perfil = perfil_configurado or os.path.join(os.path.expanduser("~"), ".chrome-bet365-debug")
+    os.makedirs(perfil, exist_ok=True)
+    headless = os.getenv("BET365_HEADLESS", "false").strip().lower() in {"1", "true", "yes", "sim"}
+    comando = [
+        executavel,
+        f"--remote-debugging-port={CDP_PORT}",
+        f"--remote-debugging-address={CDP_HOST}",
+        f"--user-data-dir={perfil}",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--window-size=1920,1080",
+    ]
+    if headless:
+        comando.append("--headless=new")
+
+    print(f"🌐 Iniciando Chrome do bot ({'headless' if headless else 'visível'})...")
+    subprocess.Popen(comando, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    for _ in range(15):
+        if porta_cdp_disponivel():
+            print(f"✅ Chrome do bot pronto na porta {CDP_PORT}.")
+            return playwright.chromium.connect_over_cdp(CDP_URL)
+        time.sleep(1)
+
+    raise RuntimeError(f"Chrome não respondeu na porta {CDP_PORT} em 15 segundos.")
+
+
+def limpar_abas_do_contexto(context):
+    """Fecha abas antigas do contexto do bot e preserva uma aba para a nova navegação."""
+    paginas = context.pages[:]
+    pagina_principal = paginas[0] if paginas else context.new_page()
+
+    for pagina in paginas[1:]:
+        try:
+            pagina.close()
+        except Exception:
+            pass
+
+    return pagina_principal
 
 # =================================================================
 # 4. EXTRAÇÃO DE DADOS (TIPMANAGER)
@@ -381,60 +543,38 @@ def auditar_resultado_recente(page_gg, dados_tarefa):
 # ... (imports e funções anteriores) ...
 
 def iniciar_monitoramento_final():
-    print("🧠 Carregando o Cérebro do V12 Sniper...")
-    if not CEREBRO_V12:
-        print("❌ Falha crítica: Cérebro V12 não carregado.")
-        return
+    modo_coleta = CEREBRO_V12 is None
+    if modo_coleta:
+        print("🧪 MODO COLETA BET365: modelo V12 ausente; sinais, Telegram e planilha estão desativados.")
+    else:
+        print("🧠 Modelo V12 carregado; monitoramento completo habilitado.")
 
     with sync_playwright() as p:
-        # Conecta ao navegador existente
-        browser = p.chromium.connect_over_cdp("http://localhost:9222")
+        encerrar_chrome = os.getenv("BET365_CLOSE_ALL_CHROME", "true").strip().lower() in {"1", "true", "yes", "sim"}
+        if encerrar_chrome:
+            encerrar_todas_instancias_chrome()
+        browser = conectar_ou_iniciar_chrome(p)
         context = browser.contexts[0]
 
-        # --- INJEÇÃO DE JAVASCRIPT PARA MASCARAR navigator.webdriver ---
-        # Este script será executado em todos os frames de todas as páginas
-        # criadas neste contexto, antes que qualquer outro script da página seja executado.
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            // Outras propriedades que podem ser mascaradas (opcional, mas pode ajudar)
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5] // Simula plugins comuns
-            });
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en'] // Simula idiomas comuns
-            });
-            Object.defineProperty(navigator, 'chrome', {
-                get: () => ({
-                    runtime: {},
-                    loadTimes: () => {},
-                    csi: () => {},
-                    app: {}
-                })
-            });
-            // Simula a função toString de algumas propriedades para evitar detecção
-            const originalToString = Function.prototype.toString;
-            Function.prototype.toString = function() {
-                if (this.name === 'get' && this.length === 0) {
-                    return originalToString.call(this);
-                }
-                return originalToString.call(this);
-            };
-        """)
-        # --- FIM DA INJEÇÃO DE JAVASCRIPT ---
+        limpar_abas = os.getenv("BET365_RESET_TABS", "true").strip().lower() in {"1", "true", "yes", "sim"}
+        page_bet = limpar_abas_do_contexto(context) if limpar_abas else localizar_aba_bet365(context)
+        if limpar_abas:
+            print("🧹 Abas anteriores do Chrome do bot foram fechadas.")
 
-        page_bet = next((pg for pg in context.pages if "bet365" in pg.title().lower()), None)
-
-        if not page_bet:
-            print("❌ Erro: Aba da Bet365 não encontrada. Tentando abrir uma nova.")
-            page_bet = context.new_page()
+        if not page_bet or "bet365" not in page_bet.url.lower():
+            print("🌐 Abrindo a Bet365 na aba limpa.")
+            page_bet = page_bet or context.new_page()
             page_bet.goto("https://www.bet365.bet.br/#/IP/B18", timeout=60000)
             page_bet.wait_for_timeout(3000)
             print("✅ Aba da Bet365 aberta!")
 
+        if pagina_bet365_bloqueada(page_bet):
+            print("❌ A Bet365 retornou uma página de bloqueio (Cloudflare). Nenhuma coleta será feita.")
+            print("   Resolva o bloqueio diretamente no navegador e execute o script novamente.")
+            return
+
         page_gg = next((pg for pg in context.pages if "h2hggl.com" in pg.url), None)
-        if not page_gg:
+        if not modo_coleta and not page_gg:
             print("🌐 Abrindo página H2HGGL para auditoria...")
             page_gg = context.new_page()
             page_gg.goto("https://h2hggl.com/", timeout=60000)
@@ -448,6 +588,7 @@ def iniciar_monitoramento_final():
         ultimo_status_lockdown = False
         ultimo_qtd_mochila    = -1
         ultimo_qtd_auditoria  = -1
+        estado_bet365_anterior = {}
 
         # NOVO: Dicionário para controlar as tentativas no TipManager
         # { "ID_JOGO": { "tentativas": N, "timestamp_ultima_tentativa": T } }
@@ -484,6 +625,13 @@ def iniciar_monitoramento_final():
                 # Adiciona um atraso aleatório antes de extrair da Bet365
                 time.sleep(3)
                 jogos_na_tela = extrair_todos_jogos_bet365(page_bet)
+
+                if modo_coleta:
+                    estado_bet365_anterior = registrar_atualizacoes_bet365(
+                        jogos_na_tela, estado_bet365_anterior
+                    )
+                    time.sleep(1)
+                    continue
 
                 # ----- PRIORIDADE E LOCKDOWN -----
                 def urgencia(j):
