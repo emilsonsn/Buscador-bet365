@@ -138,26 +138,68 @@ def extract_all_bet365_games(page_bet):
 
 def track_bet365_updates(games, previous_state):
     """Exibe somente mudanças observadas na página já aberta pelo usuário."""
-    estado_atual = {
-        game["id"]: (
-            game["periodo"], game["tempo"], game["score_casa"], game["score_fora"],
-            game["linha_over"], game["odd_over"], game["linha_under"], game["odd_under"],
-        )
+    current_state = {
+        game["id"]: {
+            "periodo": game["periodo"],
+            "tempo": game["tempo"],
+            "score_casa": game["score_casa"],
+            "score_fora": game["score_fora"],
+            "linha_over": game["linha_over"],
+            "odd_over": game["odd_over"],
+            "linha_under": game["linha_under"],
+            "odd_under": game["odd_under"],
+        }
         for game in games
+    }
+    field_labels = {
+        "periodo": "período",
+        "tempo": "tempo",
+        "score_casa": "placar casa",
+        "score_fora": "placar fora",
+        "linha_over": "linha over",
+        "odd_over": "odd over",
+        "linha_under": "linha under",
+        "odd_under": "odd under",
     }
 
     if not previous_state:
         print(f"📡 Bet365: {len(games)} jogo(s) encontrado(s). Aguardando alterações...")
     else:
-        alterados = [
-            jogo_id for jogo_id, features in estado_atual.items()
-            if previous_state.get(jogo_id) != features
-        ]
-        removidos = set(previous_state) - set(estado_atual)
-        if alterados or removidos:
-            print(f"🔄 Bet365 atualizou: {len(alterados)} alterado(s), {len(removidos)} removido(s).")
+        changed_games = []
+        added_games = set(current_state) - set(previous_state)
+        removed_games = set(previous_state) - set(current_state)
 
-    return estado_atual
+        for game_id, fields in current_state.items():
+            previous_fields = previous_state.get(game_id)
+            if not previous_fields:
+                continue
+
+            changes = []
+            for field, current_value in fields.items():
+                previous_value = previous_fields.get(field)
+                if previous_value != current_value:
+                    changes.append(
+                        f"{field_labels[field]}: {previous_value} → {current_value}"
+                    )
+
+            if changes:
+                changed_games.append((game_id, changes))
+
+        if changed_games or added_games or removed_games:
+            print(
+                f"🔄 Bet365 atualizou: {len(changed_games) + len(added_games)} alterado(s), "
+                f"{len(removed_games)} removido(s)."
+            )
+            for game_id, changes in changed_games:
+                print(f"   • {game_id}")
+                for change in changes:
+                    print(f"     - {change}")
+            for game_id in sorted(added_games):
+                print(f"   • Novo jogo: {game_id}")
+            for game_id in sorted(removed_games):
+                print(f"   • Jogo removido: {game_id}")
+
+    return current_state
 
 
 def get_bet365_games_signature(games):
